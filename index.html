@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>Eu-Eu Pancake Trumpet Run</title>
 <style>
   :root {
@@ -19,6 +19,7 @@
     color: #fff;
     font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
     overflow: hidden;
+    overscroll-behavior: none;          /* kill pull-to-refresh / bounce */
     user-select: none;
     -webkit-user-select: none;
     touch-action: none;
@@ -27,6 +28,7 @@
     position: relative;
     width: 100vw;
     height: 100vh;
+    height: 100dvh;                     /* track the dynamic mobile viewport */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -43,7 +45,7 @@
     top: 0;
     left: 0;
     right: 0;
-    padding: 10px 14px;
+    padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left));
     display: flex;
     align-items: center;
     gap: 14px;
@@ -75,10 +77,16 @@
     border: 2px solid rgba(255,255,255,0.5);
     color: #fff;
     font-weight: bold;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 16px;
+    border-radius: 10px;
+    /* Big enough to hit comfortably with a thumb (>=44px target). */
+    min-width: 48px;
+    min-height: 48px;
+    padding: 8px 14px;
+    font-size: 18px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   #pauseBtn:active { transform: scale(0.95); }
 
@@ -92,7 +100,7 @@
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 24px;
+    padding: calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
     gap: 14px;
   }
   .overlay.hidden { display: none; }
@@ -138,7 +146,7 @@
   <div id="startScreen" class="overlay">
     <h1>Eu-Eu<br>Pancake Trumpet Run</h1>
     <p class="big">Eat pancakes 🥞, grab trumpets 🎺, survive the hungry tourists!</p>
-    <p class="controls-note">Desktop: WASD / Arrow keys to move · Space to pause<br>Mobile: touch and hold to move toward your finger</p>
+    <p class="controls-note" id="controlsNote">Desktop: WASD / Arrow keys to move · Space to pause<br>Mobile: touch anywhere and drag — a joystick appears under your thumb</p>
     <button id="startBtn" class="btn">Play</button>
   </div>
 
@@ -178,6 +186,8 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", () => setTimeout(resize, 100));
+if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
 resize();
 
 /* ---------- Game state ---------- */
@@ -197,9 +207,14 @@ let enemyTimer = 0;
 let difficultyLevel = 0;
 let lastTimestamp = 0;
 
-// Touch target
-let touchActive = false;
-let touchX = 0, touchY = 0;
+// Virtual joystick (floating: anchors wherever the touch begins)
+const JOY_MAX = 64;          // max thumb travel from the anchor, in px
+const JOY_DEAD = 7;          // dead-zone so a tap doesn't twitch the player
+let joyActive = false;
+let joyId = null;            // which touch identifier owns the stick
+let joyOriginX = 0, joyOriginY = 0;   // anchor point (where finger went down)
+let joyCurX = 0, joyCurY = 0;         // current finger position
+let isTouchDevice = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
 
 /* ---------- Tunable constants ---------- */
 const PLAYER_RADIUS = 20;
@@ -280,7 +295,8 @@ function initGame() {
   particles = [];
   blasts = [];
   keys = {};
-  touchActive = false;
+  joyActive = false;
+  joyId = null;
 
   elapsed = 0;
   survivalAccumulator = 0;
@@ -391,35 +407,52 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
 
-// Touch-to-move: move toward finger while held.
-function pointerPos(e) {
-  const t = (e.touches && e.touches[0]) || e;
-  return { x: t.clientX, y: t.clientY };
+/* Floating virtual joystick.
+   The stick anchors at the point where the finger first lands, and the
+   player moves in the direction (and analog speed) you drag away from it.
+   This keeps the thumb out from under the character, which matters on phones. */
+function startJoy(id, x, y) {
+  joyActive = true;
+  joyId = id;
+  joyOriginX = joyCurX = x;
+  joyOriginY = joyCurY = y;
 }
+function moveJoy(x, y) { joyCurX = x; joyCurY = y; }
+function endJoy() { joyActive = false; joyId = null; }
+
 canvas.addEventListener("touchstart", (e) => {
   e.preventDefault();
-  const p = pointerPos(e);
-  touchActive = true; touchX = p.x; touchY = p.y;
-}, { passive: false });
-canvas.addEventListener("touchmove", (e) => {
-  e.preventDefault();
-  const p = pointerPos(e);
-  touchX = p.x; touchY = p.y;
-}, { passive: false });
-canvas.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  touchActive = false;
+  ensureAudio();
+  if (joyActive) return;                 // already tracking a finger
+  const t = e.changedTouches[0];
+  startJoy(t.identifier, t.clientX, t.clientY);
 }, { passive: false });
 
-// Mouse drag also works as touch-to-move (nice on desktop too).
-let mouseDown = false;
+canvas.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === joyId) { moveJoy(t.clientX, t.clientY); break; }
+  }
+}, { passive: false });
+
+function onTouchRelease(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === joyId) { endJoy(); break; }
+  }
+}
+canvas.addEventListener("touchend", onTouchRelease, { passive: false });
+canvas.addEventListener("touchcancel", onTouchRelease, { passive: false });
+
+// Mouse acts as a single-finger joystick too (handy for desktop testing).
 canvas.addEventListener("mousedown", (e) => {
-  mouseDown = true; touchActive = true; touchX = e.clientX; touchY = e.clientY;
+  ensureAudio();
+  startJoy("mouse", e.clientX, e.clientY);
 });
 window.addEventListener("mousemove", (e) => {
-  if (mouseDown) { touchX = e.clientX; touchY = e.clientY; }
+  if (joyActive && joyId === "mouse") moveJoy(e.clientX, e.clientY);
 });
-window.addEventListener("mouseup", () => { mouseDown = false; touchActive = false; });
+window.addEventListener("mouseup", () => { if (joyId === "mouse") endJoy(); });
 
 /* ---------- Pause ---------- */
 function togglePause() {
@@ -450,25 +483,34 @@ function update(dt) {
 
   // --- Player movement ---
   let dx = 0, dy = 0;
+  let moveScale = 1;            // 1 for keyboard; analog (0..1) for the joystick
+
   if (keys["a"] || keys["arrowleft"]) dx -= 1;
   if (keys["d"] || keys["arrowright"]) dx += 1;
   if (keys["w"] || keys["arrowup"]) dy -= 1;
   if (keys["s"] || keys["arrowdown"]) dy += 1;
 
-  if (touchActive) {
-    const tdx = touchX - player.x;
-    const tdy = touchY - player.y;
-    const d = Math.hypot(tdx, tdy);
-    if (d > 6) { dx = tdx / d; dy = tdy / d; }
+  // Joystick overrides keys when active.
+  if (joyActive) {
+    const jdx = joyCurX - joyOriginX;
+    const jdy = joyCurY - joyOriginY;
+    const jd = Math.hypot(jdx, jdy);
+    if (jd > JOY_DEAD) {
+      dx = jdx / jd;
+      dy = jdy / jd;
+      moveScale = Math.min(jd, JOY_MAX) / JOY_MAX;   // push further = move faster
+    } else {
+      dx = dy = 0;
+    }
   }
 
   const len = Math.hypot(dx, dy);
   if (len > 0) {
     dx /= len; dy /= len;
-    player.x += dx * player.speed * dt;
-    player.y += dy * player.speed * dt;
+    player.x += dx * player.speed * moveScale * dt;
+    player.y += dy * player.speed * moveScale * dt;
     if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
-    player.walkPhase += dt * 10;
+    player.walkPhase += dt * 10 * moveScale;
   }
   // Keep within bounds.
   player.x = clamp(player.x, player.radius, W - player.radius);
@@ -623,6 +665,34 @@ function draw() {
   for (const p of particles) drawParticle(p);
 
   drawPlayer();
+  if (joyActive) drawJoystick();
+}
+
+function drawJoystick() {
+  let jdx = joyCurX - joyOriginX;
+  let jdy = joyCurY - joyOriginY;
+  const jd = Math.hypot(jdx, jdy);
+  // Clamp the thumb to the ring so it reads as an analog stick.
+  if (jd > JOY_MAX) { jdx = (jdx / jd) * JOY_MAX; jdy = (jdy / jd) * JOY_MAX; }
+
+  ctx.save();
+  // base ring
+  ctx.beginPath();
+  ctx.arc(joyOriginX, joyOriginY, JOY_MAX, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.stroke();
+  // thumb
+  ctx.beginPath();
+  ctx.arc(joyOriginX + jdx, joyOriginY + jdy, 26, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,207,77,0.55)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.6)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawBackground() {
@@ -903,6 +973,13 @@ document.getElementById("pauseBtn").addEventListener("click", () => {
 initGame();                 // set up a background scene behind the start screen
 gameState = "start";
 hiscoreEl.textContent = "Best: " + highScore;
+
+// Show only the relevant control hint for the device.
+if (isTouchDevice) {
+  document.getElementById("controlsNote").innerHTML =
+    "Touch anywhere and drag — a joystick appears under your thumb.<br>" +
+    "Push further to run faster. Tap II to pause.";
+}
 requestAnimationFrame(gameLoop);
 </script>
 </body>
