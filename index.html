@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Eu-Eu Pancake Trumpet Run</title>
+<style>
+  :root {
+    --accent: #ffcf4d;
+    --accent2: #ff7b54;
+    --bg: #1b2a3a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: #fff;
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  #game {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    display: block;
+    background: #2c4a63;
+    touch-action: none;
+  }
+
+  /* HUD */
+  #hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    pointer-events: none;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    font-weight: bold;
+  }
+  #healthWrap {
+    flex: 0 0 160px;
+    max-width: 40vw;
+    height: 18px;
+    background: rgba(0,0,0,0.35);
+    border: 2px solid rgba(255,255,255,0.6);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  #healthBar {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, #ff5f6d, #ffc371);
+    transition: width 0.12s linear;
+  }
+  #score { font-size: 20px; }
+  #hiscore { font-size: 14px; opacity: 0.85; }
+  #pauseBtn {
+    margin-left: auto;
+    pointer-events: auto;
+    background: rgba(0,0,0,0.4);
+    border: 2px solid rgba(255,255,255,0.5);
+    color: #fff;
+    font-weight: bold;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  #pauseBtn:active { transform: scale(0.95); }
+
+  /* Overlays */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 24, 35, 0.82);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    gap: 14px;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 {
+    margin: 0;
+    font-size: clamp(28px, 7vw, 56px);
+    color: var(--accent);
+    text-shadow: 0 3px 0 var(--accent2), 0 6px 12px rgba(0,0,0,0.5);
+    line-height: 1.1;
+  }
+  .overlay p { margin: 4px 0; max-width: 460px; opacity: 0.9; }
+  .overlay .big { font-size: 22px; opacity: 1; }
+  .btn {
+    margin-top: 8px;
+    background: linear-gradient(180deg, var(--accent), var(--accent2));
+    color: #3a1d00;
+    border: none;
+    border-radius: 12px;
+    padding: 14px 28px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 5px 0 #b34d2c, 0 8px 14px rgba(0,0,0,0.4);
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #b34d2c; }
+  .controls-note { font-size: 14px; opacity: 0.75; }
+</style>
+</head>
+<body>
+<div id="game">
+  <canvas id="canvas"></canvas>
+
+  <div id="hud">
+    <div id="healthWrap"><div id="healthBar"></div></div>
+    <div>
+      <div id="score">0</div>
+      <div id="hiscore">Best: 0</div>
+    </div>
+    <button id="pauseBtn">II</button>
+  </div>
+
+  <!-- Start screen -->
+  <div id="startScreen" class="overlay">
+    <h1>Eu-Eu<br>Pancake Trumpet Run</h1>
+    <p class="big">Eat pancakes 🥞, grab trumpets 🎺, survive the hungry tourists!</p>
+    <p class="controls-note">Desktop: WASD / Arrow keys to move · Space to pause<br>Mobile: touch and hold to move toward your finger</p>
+    <button id="startBtn" class="btn">Play</button>
+  </div>
+
+  <!-- Pause screen -->
+  <div id="pauseScreen" class="overlay hidden">
+    <h1>Paused</h1>
+    <button id="resumeBtn" class="btn">Resume</button>
+  </div>
+
+  <!-- Game over screen -->
+  <div id="gameOverScreen" class="overlay hidden">
+    <h1>Game Over</h1>
+    <p class="big">Score: <span id="finalScore">0</span></p>
+    <p>Best: <span id="finalHi">0</span></p>
+    <p id="newRecord" class="hidden" style="color:var(--accent);font-weight:bold;">New high score! 🎉</p>
+    <button id="againBtn" class="btn">Play Again</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- Canvas setup ---------- */
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let W = 0, H = 0;
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  // Use devicePixelRatio for crisp rendering on mobile / retina.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ---------- Game state ---------- */
+const HI_KEY = "euEuHighScore";
+
+let player, pancakes, trumpets, enemies, particles, blasts;
+let keys = {};
+let gameState = "start"; // start | playing | paused | gameOver
+let highScore = parseInt(localStorage.getItem(HI_KEY) || "0", 10);
+
+// Timers / difficulty
+let elapsed = 0;            // seconds survived
+let survivalAccumulator = 0;
+let pancakeTimer = 0;
+let trumpetTimer = 0;
+let enemyTimer = 0;
+let difficultyLevel = 0;
+let lastTimestamp = 0;
+
+// Touch target
+let touchActive = false;
+let touchX = 0, touchY = 0;
+
+/* ---------- Tunable constants ---------- */
+const PLAYER_RADIUS = 20;
+const PLAYER_SPEED = 240;       // px per second
+const PANCAKE_RADIUS = 14;
+const TRUMPET_RADIUS = 15;
+const ENEMY_RADIUS = 16;
+const BASE_ENEMY_SPEED = 70;
+const BLAST_MAX_RADIUS = 170;
+
+/* ---------- HUD elements ---------- */
+const healthBar = document.getElementById("healthBar");
+const scoreEl = document.getElementById("score");
+const hiscoreEl = document.getElementById("hiscore");
+const startScreen = document.getElementById("startScreen");
+const pauseScreen = document.getElementById("pauseScreen");
+const gameOverScreen = document.getElementById("gameOverScreen");
+const finalScoreEl = document.getElementById("finalScore");
+const finalHiEl = document.getElementById("finalHi");
+const newRecordEl = document.getElementById("newRecord");
+
+/* ---------- Utility ---------- */
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function dist2(ax, ay, bx, by) {
+  const dx = ax - bx, dy = ay - by;
+  return dx * dx + dy * dy;
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/* ---------- Audio (tiny WebAudio blips, no assets) ---------- */
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (e) { audioCtx = null; }
+  }
+}
+function beep(freq, duration, type, volume) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || "sine";
+  osc.frequency.value = freq;
+  gain.gain.value = volume == null ? 0.06 : volume;
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  gain.gain.setValueAtTime(gain.gain.value, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  osc.start(now);
+  osc.stop(now + duration);
+}
+function sfxPancake() { beep(660, 0.12, "sine", 0.05); }
+function sfxHit() { beep(120, 0.18, "sawtooth", 0.08); }
+function sfxTrumpet() {
+  // little ascending fanfare
+  beep(440, 0.12, "square", 0.06);
+  setTimeout(() => beep(550, 0.12, "square", 0.06), 90);
+  setTimeout(() => beep(660, 0.18, "square", 0.06), 180);
+}
+
+/* ---------- Init / restart ---------- */
+function initGame() {
+  player = {
+    x: W / 2,
+    y: H / 2,
+    radius: PLAYER_RADIUS,
+    speed: PLAYER_SPEED,
+    health: 100,
+    score: 0,
+    facing: 1,        // 1 = right, -1 = left
+    hurtFlash: 0,
+    walkPhase: 0
+  };
+  pancakes = [];
+  trumpets = [];
+  enemies = [];
+  particles = [];
+  blasts = [];
+  keys = {};
+  touchActive = false;
+
+  elapsed = 0;
+  survivalAccumulator = 0;
+  pancakeTimer = 0;
+  trumpetTimer = 0;
+  enemyTimer = 0;
+  difficultyLevel = 0;
+
+  // Seed a few pancakes so there's something to grab immediately.
+  for (let i = 0; i < 4; i++) spawnPancake();
+  spawnTrumpet();
+  updateHud();
+}
+
+function startGame() {
+  ensureAudio();
+  initGame();
+  gameState = "playing";
+  startScreen.classList.add("hidden");
+  gameOverScreen.classList.add("hidden");
+  pauseScreen.classList.add("hidden");
+  lastTimestamp = performance.now();
+}
+
+function restartGame() { startGame(); }
+
+/* ---------- Spawning ---------- */
+function spawnPancake() {
+  pancakes.push({
+    x: rand(40, W - 40),
+    y: rand(70, H - 40),
+    radius: PANCAKE_RADIUS,
+    bob: rand(0, Math.PI * 2)
+  });
+}
+
+function spawnTrumpet() {
+  trumpets.push({
+    x: rand(40, W - 40),
+    y: rand(70, H - 40),
+    radius: TRUMPET_RADIUS,
+    bob: rand(0, Math.PI * 2)
+  });
+}
+
+function spawnEnemy() {
+  // Spawn at a random screen edge.
+  let x, y;
+  const edge = Math.floor(rand(0, 4));
+  if (edge === 0) { x = rand(0, W); y = -ENEMY_RADIUS; }
+  else if (edge === 1) { x = W + ENEMY_RADIUS; y = rand(0, H); }
+  else if (edge === 2) { x = rand(0, W); y = H + ENEMY_RADIUS; }
+  else { x = -ENEMY_RADIUS; y = rand(0, H); }
+
+  enemies.push({
+    x, y,
+    radius: ENEMY_RADIUS,
+    speed: BASE_ENEMY_SPEED + difficultyLevel * 14 + rand(-10, 10),
+    hue: rand(0, 360),
+    cooldown: 0,        // brief disable after hitting the player
+    wobble: rand(0, Math.PI * 2)
+  });
+}
+
+/* ---------- Particles ---------- */
+function spawnParticles(x, y, color, count, speedScale) {
+  for (let i = 0; i < count; i++) {
+    const a = rand(0, Math.PI * 2);
+    const s = rand(40, 160) * (speedScale || 1);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s,
+      life: rand(0.3, 0.7),
+      maxLife: 0.7,
+      color,
+      size: rand(2, 5)
+    });
+  }
+}
+
+/* ---------- Trumpet blast ---------- */
+function triggerTrumpetBlast(x, y) {
+  blasts.push({ x, y, radius: 10, maxRadius: BLAST_MAX_RADIUS, alpha: 1 });
+  sfxTrumpet();
+  // Destroy nearby enemies.
+  const r2 = BLAST_MAX_RADIUS * BLAST_MAX_RADIUS;
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (dist2(x, y, e.x, e.y) <= r2) {
+      spawnParticles(e.x, e.y, "#ff7b54", 12, 1.2);
+      enemies.splice(i, 1);
+      player.score += 25;
+    }
+  }
+  spawnParticles(x, y, "#ffcf4d", 24, 1.4);
+}
+
+/* ---------- Input ---------- */
+window.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (k === " " || e.code === "Space") {
+    e.preventDefault();
+    togglePause();
+  }
+  // Allow Enter / Space to start or restart from overlays handled by buttons.
+});
+window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+// Touch-to-move: move toward finger while held.
+function pointerPos(e) {
+  const t = (e.touches && e.touches[0]) || e;
+  return { x: t.clientX, y: t.clientY };
+}
+canvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const p = pointerPos(e);
+  touchActive = true; touchX = p.x; touchY = p.y;
+}, { passive: false });
+canvas.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  const p = pointerPos(e);
+  touchX = p.x; touchY = p.y;
+}, { passive: false });
+canvas.addEventListener("touchend", (e) => {
+  e.preventDefault();
+  touchActive = false;
+}, { passive: false });
+
+// Mouse drag also works as touch-to-move (nice on desktop too).
+let mouseDown = false;
+canvas.addEventListener("mousedown", (e) => {
+  mouseDown = true; touchActive = true; touchX = e.clientX; touchY = e.clientY;
+});
+window.addEventListener("mousemove", (e) => {
+  if (mouseDown) { touchX = e.clientX; touchY = e.clientY; }
+});
+window.addEventListener("mouseup", () => { mouseDown = false; touchActive = false; });
+
+/* ---------- Pause ---------- */
+function togglePause() {
+  if (gameState === "playing") {
+    gameState = "paused";
+    pauseScreen.classList.remove("hidden");
+  } else if (gameState === "paused") {
+    gameState = "playing";
+    pauseScreen.classList.add("hidden");
+    lastTimestamp = performance.now();
+  }
+}
+
+/* ---------- Update ---------- */
+function update(dt) {
+  elapsed += dt;
+
+  // --- Difficulty progression every 20 seconds ---
+  const newLevel = Math.floor(elapsed / 20);
+  if (newLevel > difficultyLevel) difficultyLevel = newLevel;
+
+  // --- Survival bonus: +1 per second ---
+  survivalAccumulator += dt;
+  while (survivalAccumulator >= 1) {
+    survivalAccumulator -= 1;
+    player.score += 1;
+  }
+
+  // --- Player movement ---
+  let dx = 0, dy = 0;
+  if (keys["a"] || keys["arrowleft"]) dx -= 1;
+  if (keys["d"] || keys["arrowright"]) dx += 1;
+  if (keys["w"] || keys["arrowup"]) dy -= 1;
+  if (keys["s"] || keys["arrowdown"]) dy += 1;
+
+  if (touchActive) {
+    const tdx = touchX - player.x;
+    const tdy = touchY - player.y;
+    const d = Math.hypot(tdx, tdy);
+    if (d > 6) { dx = tdx / d; dy = tdy / d; }
+  }
+
+  const len = Math.hypot(dx, dy);
+  if (len > 0) {
+    dx /= len; dy /= len;
+    player.x += dx * player.speed * dt;
+    player.y += dy * player.speed * dt;
+    if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
+    player.walkPhase += dt * 10;
+  }
+  // Keep within bounds.
+  player.x = clamp(player.x, player.radius, W - player.radius);
+  player.y = clamp(player.y, player.radius + 50, H - player.radius);
+
+  if (player.hurtFlash > 0) player.hurtFlash -= dt;
+
+  // --- Spawn timers ---
+  pancakeTimer -= dt;
+  if (pancakeTimer <= 0) {
+    spawnPancake();
+    pancakeTimer = rand(1.0, 2.2);           // pancakes stay common
+  }
+
+  trumpetTimer -= dt;
+  if (trumpetTimer <= 0) {
+    if (trumpets.length < 2) spawnTrumpet();
+    // Trumpets become slightly rarer over time.
+    trumpetTimer = rand(8, 12) + difficultyLevel * 1.5;
+  }
+
+  enemyTimer -= dt;
+  if (enemyTimer <= 0) {
+    spawnEnemy();
+    // Spawn rate increases with difficulty.
+    const base = Math.max(0.5, 2.2 - difficultyLevel * 0.18);
+    enemyTimer = rand(base * 0.7, base * 1.3);
+  }
+
+  // --- Enemy movement (chase player) ---
+  for (const e of enemies) {
+    e.wobble += dt * 6;
+    if (e.cooldown > 0) { e.cooldown -= dt; continue; }
+    const ex = player.x - e.x;
+    const ey = player.y - e.y;
+    const d = Math.hypot(ex, ey) || 1;
+    e.x += (ex / d) * e.speed * dt;
+    e.y += (ey / d) * e.speed * dt;
+  }
+
+  // --- Collectible bobbing ---
+  for (const p of pancakes) p.bob += dt * 3;
+  for (const t of trumpets) t.bob += dt * 4;
+
+  // --- Particles ---
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.94;
+    p.vy *= 0.94;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // --- Blasts ---
+  for (let i = blasts.length - 1; i >= 0; i--) {
+    const b = blasts[i];
+    b.radius += (b.maxRadius - b.radius) * Math.min(1, dt * 8) + 200 * dt;
+    b.alpha -= dt * 1.8;
+    if (b.alpha <= 0 || b.radius >= b.maxRadius) blasts.splice(i, 1);
+  }
+
+  handleCollisions();
+  updateHud();
+}
+
+/* ---------- Collisions ---------- */
+function handleCollisions() {
+  // Pancakes
+  for (let i = pancakes.length - 1; i >= 0; i--) {
+    const p = pancakes[i];
+    const rr = (player.radius + p.radius) ** 2;
+    if (dist2(player.x, player.y, p.x, p.y) <= rr) {
+      pancakes.splice(i, 1);
+      player.score += 10;
+      player.health = Math.min(100, player.health + 5);
+      spawnParticles(p.x, p.y, "#f6c453", 8, 0.7);
+      sfxPancake();
+    }
+  }
+
+  // Trumpets
+  for (let i = trumpets.length - 1; i >= 0; i--) {
+    const t = trumpets[i];
+    const rr = (player.radius + t.radius) ** 2;
+    if (dist2(player.x, player.y, t.x, t.y) <= rr) {
+      trumpets.splice(i, 1);
+      player.score += 50;
+      triggerTrumpetBlast(player.x, player.y);
+    }
+  }
+
+  // Enemies
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.cooldown > 0) continue;
+    const rr = (player.radius + e.radius) ** 2;
+    if (dist2(player.x, player.y, e.x, e.y) <= rr) {
+      player.health -= 10;
+      player.hurtFlash = 0.3;
+      sfxHit();
+      spawnParticles(e.x, e.y, "#ff5f6d", 8, 1);
+
+      // Knock the enemy back and briefly disable it.
+      const kx = e.x - player.x;
+      const ky = e.y - player.y;
+      const d = Math.hypot(kx, ky) || 1;
+      e.x += (kx / d) * 60;
+      e.y += (ky / d) * 60;
+      e.cooldown = 0.8;
+
+      if (player.health <= 0) {
+        player.health = 0;
+        endGame();
+        return;
+      }
+    }
+  }
+}
+
+/* ---------- HUD ---------- */
+function updateHud() {
+  healthBar.style.width = clamp(player.health, 0, 100) + "%";
+  scoreEl.textContent = player.score;
+  hiscoreEl.textContent = "Best: " + highScore;
+}
+
+/* ---------- Game over ---------- */
+function endGame() {
+  gameState = "gameOver";
+  const isRecord = player.score > highScore;
+  if (isRecord) {
+    highScore = player.score;
+    localStorage.setItem(HI_KEY, String(highScore));
+  }
+  finalScoreEl.textContent = player.score;
+  finalHiEl.textContent = highScore;
+  newRecordEl.classList.toggle("hidden", !isRecord);
+  gameOverScreen.classList.remove("hidden");
+}
+
+/* ---------- Drawing ---------- */
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+
+  for (const b of blasts) drawBlast(b);
+  for (const p of pancakes) drawPancake(p);
+  for (const t of trumpets) drawTrumpet(t);
+  for (const e of enemies) drawEnemy(e);
+  for (const p of particles) drawParticle(p);
+
+  drawPlayer();
+}
+
+function drawBackground() {
+  // Amsterdam-ish: canal water with a few "houses" along the top strip.
+  ctx.fillStyle = "#2c4a63";
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle canal ripples.
+  ctx.strokeStyle = "rgba(255,255,255,0.04)";
+  ctx.lineWidth = 2;
+  const t = elapsed;
+  for (let y = 90; y < H; y += 46) {
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 24) {
+      const yy = y + Math.sin((x * 0.03) + t + y) * 3;
+      if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+
+  // Row of canal houses near the top.
+  const houseColors = ["#7b4b3a", "#9c5d3f", "#5e6f88", "#8a6a4f", "#6b8e7a"];
+  const hw = 54;
+  for (let i = 0, x = 8; x < W; i++, x += hw + 6) {
+    const c = houseColors[i % houseColors.length];
+    const hh = 38 + ((i * 13) % 22);
+    const baseY = 56;
+    ctx.fillStyle = c;
+    ctx.fillRect(x, baseY - hh, hw, hh);
+    // gabled roof
+    ctx.beginPath();
+    ctx.moveTo(x - 2, baseY - hh);
+    ctx.lineTo(x + hw / 2, baseY - hh - 14);
+    ctx.lineTo(x + hw + 2, baseY - hh);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fill();
+    // little windows
+    ctx.fillStyle = "rgba(255,221,120,0.55)";
+    for (let wy = baseY - hh + 8; wy < baseY - 8; wy += 16) {
+      ctx.fillRect(x + 8, wy, 10, 9);
+      ctx.fillRect(x + hw - 18, wy, 10, 9);
+    }
+  }
+}
+
+function drawPancake(p) {
+  const yo = Math.sin(p.bob) * 3;
+  ctx.save();
+  ctx.translate(p.x, p.y + yo);
+  // stack of 3 pancakes
+  for (let i = 2; i >= 0; i--) {
+    const yy = -i * 5;
+    ctx.fillStyle = i === 0 ? "#f6c453" : "#e8a94a";
+    ctx.beginPath();
+    ctx.ellipse(0, yy, p.radius, p.radius * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#b9742f";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  // syrup drip on top
+  ctx.fillStyle = "#a9601f";
+  ctx.beginPath();
+  ctx.ellipse(0, -10, p.radius * 0.6, p.radius * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // butter
+  ctx.fillStyle = "#fff2b0";
+  ctx.fillRect(-4, -14, 8, 6);
+  ctx.restore();
+}
+
+function drawTrumpet(t) {
+  const yo = Math.sin(t.bob) * 4;
+  ctx.save();
+  ctx.translate(t.x, t.y + yo);
+  // glow
+  ctx.fillStyle = "rgba(255,207,77,0.25)";
+  ctx.beginPath();
+  ctx.arc(0, 0, t.radius + 8, 0, Math.PI * 2);
+  ctx.fill();
+  // trumpet body
+  ctx.fillStyle = "#ffcf4d";
+  ctx.strokeStyle = "#c8962a";
+  ctx.lineWidth = 2;
+  // tube
+  ctx.fillRect(-12, -4, 16, 8);
+  ctx.strokeRect(-12, -4, 16, 8);
+  // bell (flared end)
+  ctx.beginPath();
+  ctx.moveTo(4, -10);
+  ctx.lineTo(16, -12);
+  ctx.lineTo(16, 12);
+  ctx.lineTo(4, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // mouthpiece
+  ctx.beginPath();
+  ctx.arc(-13, 0, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // valves
+  ctx.fillStyle = "#c8962a";
+  ctx.fillRect(-6, -9, 3, 6);
+  ctx.fillRect(-1, -9, 3, 6);
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  const stunned = e.cooldown > 0;
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  const wob = Math.sin(e.wobble) * 2;
+
+  // body (a "hungry tourist" blob with a backpack/cap vibe)
+  ctx.fillStyle = stunned ? "#888" : `hsl(${e.hue}, 60%, 55%)`;
+  ctx.beginPath();
+  ctx.arc(0, wob, e.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // little cap
+  ctx.fillStyle = stunned ? "#666" : `hsl(${(e.hue + 180) % 360}, 60%, 40%)`;
+  ctx.beginPath();
+  ctx.arc(0, -e.radius * 0.4 + wob, e.radius * 0.7, Math.PI, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(-e.radius * 0.7, -e.radius * 0.4 + wob, e.radius * 1.4, 3);
+
+  // hungry eyes
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(-5, wob, 4, 0, Math.PI * 2);
+  ctx.arc(5, wob, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#000";
+  const look = stunned ? 0 : 1;
+  ctx.beginPath();
+  ctx.arc(-5, wob + look, 2, 0, Math.PI * 2);
+  ctx.arc(5, wob + look, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // open hungry mouth
+  ctx.fillStyle = "#3a0d0d";
+  ctx.beginPath();
+  ctx.arc(0, e.radius * 0.45 + wob, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawParticle(p) {
+  ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+  ctx.fillStyle = p.color;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawBlast(b) {
+  ctx.save();
+  ctx.globalAlpha = clamp(b.alpha, 0, 1);
+  ctx.strokeStyle = "#ffcf4d";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = clamp(b.alpha * 0.5, 0, 1);
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, b.radius * 0.7, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlayer() {
+  const p = player;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.scale(p.facing, 1);
+
+  const bounce = Math.sin(p.walkPhase) * 2;
+  const hurt = p.hurtFlash > 0 && Math.floor(p.hurtFlash * 20) % 2 === 0;
+
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(0, p.radius + 4, p.radius * 0.9, p.radius * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // body
+  ctx.fillStyle = hurt ? "#ff8a8a" : "#3f7cac";
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(-p.radius * 0.7, bounce, p.radius * 1.4, p.radius * 1.1, 8)
+                : ctx.rect(-p.radius * 0.7, bounce, p.radius * 1.4, p.radius * 1.1);
+  ctx.fill();
+
+  // head (bald) — skin tone
+  const skin = hurt ? "#ffd0c0" : "#f1c39a";
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.arc(0, -p.radius * 0.5 + bounce, p.radius * 0.78, 0, Math.PI * 2);
+  ctx.fill();
+
+  // shiny bald highlight
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.beginPath();
+  ctx.ellipse(-4, -p.radius * 0.85 + bounce, 5, 3, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // beard
+  ctx.fillStyle = "#5a4632";
+  ctx.beginPath();
+  ctx.arc(0, -p.radius * 0.28 + bounce, p.radius * 0.62, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.fill();
+  // beard sides
+  ctx.beginPath();
+  ctx.moveTo(-p.radius * 0.6, -p.radius * 0.5 + bounce);
+  ctx.quadraticCurveTo(-p.radius * 0.55, -p.radius * 0.05 + bounce, 0, p.radius * 0.05 + bounce);
+  ctx.quadraticCurveTo(p.radius * 0.55, -p.radius * 0.05 + bounce, p.radius * 0.6, -p.radius * 0.5 + bounce);
+  ctx.fill();
+
+  // eyes
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(p.radius * 0.12, -p.radius * 0.55 + bounce, 4, 0, Math.PI * 2);
+  ctx.arc(p.radius * 0.42, -p.radius * 0.55 + bounce, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#222";
+  ctx.beginPath();
+  ctx.arc(p.radius * 0.16, -p.radius * 0.55 + bounce, 2, 0, Math.PI * 2);
+  ctx.arc(p.radius * 0.46, -p.radius * 0.55 + bounce, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // smile (small, over the beard)
+  ctx.strokeStyle = "#7a3b2e";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(p.radius * 0.28, -p.radius * 0.32 + bounce, 5, 0.1 * Math.PI, 0.9 * Math.PI);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/* ---------- Main loop ---------- */
+function gameLoop(timestamp) {
+  let dt = (timestamp - lastTimestamp) / 1000;
+  lastTimestamp = timestamp;
+  // Guard against huge dt after tab switch / pause.
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+
+  if (gameState === "playing") {
+    update(dt);
+    draw();
+  } else if (gameState === "paused") {
+    draw(); // freeze frame
+  } else if (gameState === "start" || gameState === "gameOver") {
+    // Draw a calm background behind the overlay if a game exists.
+    if (player) draw(); else drawBackground();
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+/* ---------- Buttons ---------- */
+document.getElementById("startBtn").addEventListener("click", startGame);
+document.getElementById("againBtn").addEventListener("click", restartGame);
+document.getElementById("resumeBtn").addEventListener("click", togglePause);
+document.getElementById("pauseBtn").addEventListener("click", () => {
+  if (gameState === "playing" || gameState === "paused") togglePause();
+});
+
+/* ---------- Boot ---------- */
+initGame();                 // set up a background scene behind the start screen
+gameState = "start";
+hiscoreEl.textContent = "Best: " + highScore;
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
